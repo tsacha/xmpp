@@ -1,10 +1,9 @@
 package xmpp
 
 import (
-	"fmt"
+	"bufio"
+	"encoding/xml"
 )
-
-var err error
 
 func Connect(account string, password string) {
 	LogInit()
@@ -14,23 +13,18 @@ func Connect(account string, password string) {
 	conn := ConnectServer(addr, port)
 	defer conn.Close()
 
-	// Stream request
-	stream_request := fmt.Sprintf("<?xml version='1.0'?>"+
-		"<stream:stream to='%s' xmlns='%s'"+
-		" xmlns:stream='%s' version='1.0'>",
-		domain, nsClient, nsStream)
-	QueryServer("Stream request", stream_request, conn)
+	xmppconn := &XMPPConnection{
+		incoming: make(chan incomingResult),
+		outgoing: make(chan string),
+		reader:   xml.NewDecoder(conn),
+		writer:   bufio.NewWriter(conn),
+	}
+	go xmppconn.Write()
 
-	// StartTLS request
-	starttls_request := "<starttls xmlns='" + nsStartTLS + "'/>"
-	QueryServer("StartTLS request", starttls_request, conn)
+	xmppconn.StartStream(domain)
+	xmppconn.EncryptConnection(domain, conn)
 
-	// TLS encryption
-	conn = EncryptConnection(domain, conn)
+	go xmppconn.Read()
 
-	// TLS Stream request
-	QueryServer("TLS Stream request", stream_request, conn)
-
-	// Authentication query
-	AuthenticateUser(account, password, conn)
+	xmppconn.AuthenticateUser(account, password)
 }
