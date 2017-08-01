@@ -13,18 +13,19 @@ type clientIQ struct {
 	Type    string   `xml:"type,attr"`
 	Query   []byte   `xml:",innerxml"`
 	Error   clientError
-	Bind    bindBind
+	Bind    bind
 }
 
 // RFC 6120 # 4.3.2 — Stream features
+// List of features: https://xmpp.org/registrar/stream-features.html
 type streamFeatures struct {
 	XMLName    xml.Name `xml:"http://etherx.jabber.org/streams features"`
 	StartTLS   *tlsStartTLS
 	Mechanisms saslMechanisms
-	Bind       bindBind
+	Bind       bind
 	Session    bool
 	Sms        []sm `xml:"sm"` // XEP 0198
-	Caps       *caps
+	Caps       caps // XEP 0115
 }
 
 // RFC 6120  # 4.7 — Stream Attributes
@@ -33,7 +34,7 @@ type streamStream struct {
 	Lang    string
 	From    string
 	To      string
-	Id      string
+	ID      string
 	Version string
 	Xmlns   string
 }
@@ -81,7 +82,7 @@ type saslSuccess struct {
 }
 
 // RFC 6120  # 9.1.3 — Resource Binding
-type bindBind struct {
+type bind struct {
 	XMLName  xml.Name `xml:"urn:ietf:params:xml:ns:xmpp-bind bind"`
 	Resource string
 	Jid      string `xml:"jid"`

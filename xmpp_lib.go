@@ -14,6 +14,7 @@ import (
 	mathrand "math/rand"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -24,6 +25,7 @@ const (
 	nsSASL         = "urn:ietf:params:xml:ns:xmpp-sasl"
 	nsCaps         = "http://jabber.org/protocol/caps"
 	nsBind         = "urn:ietf:params:xml:ns:xmpp-bind"
+	nsSession      = "urn:ietf:params:xml:ns:xmpp-session"
 	nsStreamMgmtv2 = "urn:xmpp:sm:2"
 	nsStreamMgmtv3 = "urn:xmpp:sm:3"
 )
@@ -40,12 +42,15 @@ type XMPPConnection struct {
 	reader   *xml.Decoder
 	writer   *bufio.Writer
 	conn     net.Conn
-	conf     XMPPConf
+	state    XMPPState
 }
 
-type XMPPConf struct {
-	stream          int
-	stream_optional bool
+type XMPPState struct {
+	sm_version  int
+	sm_optional bool
+	sm_state    bool
+	jid         string
+	resource    string
 }
 
 // Cookie is a unique XMPP session identifier
@@ -127,7 +132,7 @@ func (xmppconn *XMPPConnection) next(se xml.StartElement) incomingResult {
 			case "lang":
 				stream.Lang = attr.Value
 			case "id":
-				stream.Id = attr.Value
+				stream.ID = attr.Value
 			case "version":
 				stream.Version = attr.Value
 			case "xmlns":
@@ -137,10 +142,10 @@ func (xmppconn *XMPPConnection) next(se xml.StartElement) incomingResult {
 		logrus.WithFields(logrus.Fields{
 			"stream":  stream.Stream,
 			"lang":    stream.Lang,
-			"id":      stream.Id,
+			"id":      stream.ID,
 			"version": stream.Version,
 			"xmlns":   stream.Xmlns,
-		}).Info("Received stream for server")
+		}).Info("Received stream from server")
 		return (incomingResult{se.Name, stream, nil})
 	case nsStream + " features":
 		nv = &streamFeatures{}
@@ -277,12 +282,12 @@ func (xmppconn *XMPPConnection) AuthenticateUser(account string, password string
 		case *streamFeatures:
 			for _, attr := range t.Sms {
 				if attr.XMLName.Space == nsStreamMgmtv3 {
-					xmppconn.conf.stream = int(math.Max(float64(xmppconn.conf.stream), 3.0))
+					xmppconn.state.sm_version = int(math.Max(float64(xmppconn.state.sm_version), 3.0))
 				} else if attr.XMLName.Space == nsStreamMgmtv2 {
-					xmppconn.conf.stream = int(math.Max(float64(xmppconn.conf.stream), 2.0))
+					xmppconn.state.sm_version = int(math.Max(float64(xmppconn.state.sm_version), 2.0))
 				}
 				if attr.Optional == "" {
-					xmppconn.conf.stream_optional = true
+					xmppconn.state.sm_optional = true
 				}
 			}
 		}
@@ -291,5 +296,56 @@ func (xmppconn *XMPPConnection) AuthenticateUser(account string, password string
 		logrus.Error("Authentication failure : " + t.Text)
 	default:
 		logrus.Error("Authentication failure : XML error")
+	}
+}
+
+func (xmppconn *XMPPConnection) Bind(resource string) {
+	id_bind := strconv.FormatUint(uint64(getCookie()), 10)
+
+	iq_request := fmt.Sprintf("<iq type='%s' id='%s'>"+
+		"<bind xmlns='%s'>"+
+		"<resource>%s</resource>"+
+		"</bind>"+
+		"</iq>",
+		"set", id_bind, nsBind, resource)
+
+	logrus.WithFields(logrus.Fields{
+		"resource": resource,
+		"id":       id_bind,
+	}).Info("Binding to resource")
+	xmppconn.outgoing <- iq_request
+	iq_response := <-xmppconn.incoming
+	switch t := iq_response.Interface.(type) {
+	case *clientIQ:
+		if t.ID == id_bind {
+			logrus.WithFields(logrus.Fields{
+				"resource": resource,
+				"jid":      t.Bind.Jid,
+				"id":       t.ID,
+			}).Info("Bound")
+			xmppconn.state.jid = t.Bind.Jid
+			xmppconn.state.resource = resource
+		}
+	}
+}
+
+func (xmppconn *XMPPConnection) StartSession() {
+	id_session := strconv.FormatUint(uint64(getCookie()), 10)
+
+	session_request := fmt.Sprintf("<iq from='%s' type='%s' id='%s'>"+
+		"<session xmlns='%s' />"+
+		"</iq>",
+		xmppconn.state.jid, "set", id_session, nsSession)
+
+	logrus.Info("Starting session")
+	xmppconn.outgoing <- session_request
+	session_response := <-xmppconn.incoming
+	switch t := session_response.Interface.(type) {
+	case *clientIQ:
+		if t.Type == "result" {
+			logrus.WithFields(logrus.Fields{
+				"id": t.ID,
+			}).Info("Session started")
+		}
 	}
 }
