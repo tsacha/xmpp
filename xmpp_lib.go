@@ -2,23 +2,30 @@ package xmpp
 
 import (
 	"bufio"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"github.com/sirupsen/logrus"
-	"math/rand"
+	"math"
+	mathrand "math/rand"
 	"net"
+	"os"
 	"strings"
 )
 
 const (
-	nsStream   = "http://etherx.jabber.org/streams"
-	nsClient   = "jabber:client"
-	nsStartTLS = "urn:ietf:params:xml:ns:xmpp-tls"
-	nsSASL     = "urn:ietf:params:xml:ns:xmpp-sasl"
-	nsCaps     = "http://jabber.org/protocol/caps"
+	nsStream       = "http://etherx.jabber.org/streams"
+	nsClient       = "jabber:client"
+	nsStartTLS     = "urn:ietf:params:xml:ns:xmpp-tls"
+	nsSASL         = "urn:ietf:params:xml:ns:xmpp-sasl"
+	nsCaps         = "http://jabber.org/protocol/caps"
+	nsBind         = "urn:ietf:params:xml:ns:xmpp-bind"
+	nsStreamMgmtv2 = "urn:xmpp:sm:2"
+	nsStreamMgmtv3 = "urn:xmpp:sm:3"
 )
 
 type incomingResult struct {
@@ -33,77 +40,23 @@ type XMPPConnection struct {
 	reader   *xml.Decoder
 	writer   *bufio.Writer
 	conn     net.Conn
+	conf     XMPPConf
 }
 
-// RFC 3920  C.1  Streams name space
-type streamStream struct {
-	Stream  string
-	Lang    string
-	From    string
-	Id      string
-	Version string
-	Xmlns   string
+type XMPPConf struct {
+	stream          int
+	stream_optional bool
 }
 
-type streamFeatures struct {
-	XMLName    xml.Name `xml:"http://etherx.jabber.org/streams features"`
-	StartTLS   *tlsStartTLS
-	Mechanisms saslMechanisms
-	Bind       bindBind
-	Session    bool
-	Caps       *caps
-}
+// Cookie is a unique XMPP session identifier
+type Cookie uint64
 
-// RFC 3920  C.3  TLS name space
-type tlsStartTLS struct {
-	XMLName  xml.Name `xml:"urn:ietf:params:xml:ns:xmpp-tls starttls"`
-	Required *string  `xml:"required"`
-}
-
-type tlsProceed struct {
-	XMLName xml.Name `xml:"urn:ietf:params:xml:ns:xmpp-tls proceed"`
-}
-
-// RFC 3920  C.4  SASL name space
-type saslMechanisms struct {
-	XMLName   xml.Name `xml:"urn:ietf:params:xml:ns:xmpp-sasl mechanisms"`
-	Mechanism []string `xml:"mechanism"`
-}
-
-type saslChallenge string
-
-type saslRspAuth string
-
-type saslResponse string
-
-type saslAbort struct {
-	XMLName xml.Name `xml:"urn:ietf:params:xml:ns:xmpp-sasl abort"`
-}
-
-type saslSuccess struct {
-	XMLName xml.Name `xml:"urn:ietf:params:xml:ns:xmpp-sasl success"`
-}
-
-type saslFailure struct {
-	XMLName xml.Name `xml:"urn:ietf:params:xml:ns:xmpp-sasl failure"`
-	Any     xml.Name `xml:",any"`
-	Text    string   `xml:"text"`
-}
-
-// RFC 3920  C.5  Resource binding name space
-type bindBind struct {
-	XMLName  xml.Name `xml:"urn:ietf:params:xml:ns:xmpp-bind bind"`
-	Resource string
-	Jid      string `xml:"jid"`
-}
-
-// XEP 0115 Entity
-type caps struct {
-	XMLName xml.Name `xml:"http://jabber.org/protocol/caps c"`
-	Ext     string   `xml:"ext,attr"`  // DEPRECATED
-	Hash    string   `xml:"hash,attr"` // REQUIRED
-	Node    string   `xml:"node,attr"` // REQUIRED
-	Ver     string   `xml:"ver,attr"`  // REQUIRED
+func getCookie() Cookie {
+	var buf [8]byte
+	if _, err := rand.Reader.Read(buf[:]); err != nil {
+		panic("Failed to read random bytes: " + err.Error())
+	}
+	return Cookie(binary.LittleEndian.Uint64(buf[:]))
 }
 
 var err error
@@ -139,7 +92,7 @@ func resolvServer(account string) (string, string, string) {
 	_, addrs, _ := net.LookupSRV("xmpp-client", "tcp", domain)
 
 	// Random choice between SRV records
-	server_choice := rand.Intn(len(addrs))
+	server_choice := mathrand.Intn(len(addrs))
 
 	logrus.WithFields(logrus.Fields{
 		"nb_entries": len(addrs),
@@ -197,9 +150,16 @@ func (xmppconn *XMPPConnection) next(se xml.StartElement) incomingResult {
 		nv = &saslSuccess{}
 	case nsSASL + " failure":
 		nv = &saslFailure{}
+	case nsClient + " iq":
+		nv = &clientIQ{}
+	case nsStreamMgmtv2 + " enabled":
+		nv = &enabled{}
+	case nsStreamMgmtv3 + " enabled":
+		nv = &enabled{}
 	default:
+		fmt.Println(se.Name.Space)
 		return (incomingResult{xml.Name{}, nil, errors.New("unexpected XMPP message " +
-			se.Name.Space + " <" + se.Name.Local + "/>")})
+			se.Name.Space + " " + se.Name.Local)})
 	}
 
 	// Unmarshal into that storage.
@@ -231,6 +191,8 @@ func (xmppconn *XMPPConnection) StartStream(domain string) {
 		"<stream:stream to='%s' xmlns='%s'"+
 		" xmlns:stream='%s' version='1.0'>",
 		domain, nsClient, nsStream)
+
+	logrus.Info("Send stream request")
 	xmppconn.outgoing <- stream_request
 
 	// XML ProcInst
@@ -250,8 +212,14 @@ func (xmppconn *XMPPConnection) EncryptConnection(domain string, conn net.Conn) 
 	// <proceed>
 	xmppconn.NextElement()
 
+	f, err := os.Create("/home/sacha/lol.txt")
+	defer f.Close()
+
+	w := bufio.NewWriter(f)
+
 	conf := &tls.Config{
-		ServerName: domain,
+		ServerName:   domain,
+		KeyLogWriter: w,
 	}
 
 	// TLS Handshake
@@ -260,10 +228,12 @@ func (xmppconn *XMPPConnection) EncryptConnection(domain string, conn net.Conn) 
 	err = t.Handshake()
 	LogError(err, "TLS Handshake")
 
-	xmppconn.reader = xml.NewDecoder(t)
-	xmppconn.writer = bufio.NewWriter(t)
+	xmppconn.reader = xml.NewDecoder(teeIn{t})
+	xmppconn.writer = bufio.NewWriter(teeOut{t})
 
 	xmppconn.StartStream(domain)
+
+	w.Flush()
 }
 
 func create_user_hash(account string, password string) []byte {
@@ -274,18 +244,14 @@ func create_user_hash(account string, password string) []byte {
 	return enc
 }
 
-func (xmppconn *XMPPConnection) AuthenticateUser(account string, password string) {
+func (xmppconn *XMPPConnection) AuthenticateUser(account string, password string, domain string) {
 	hash := create_user_hash(account, password)
 
 	auth_request := fmt.Sprintf("<auth xmlns='%s' mechanism='PLAIN'>%s</auth>",
 		nsSASL, hash)
-	auth_request_anonymous := fmt.Sprintf("<auth xmlns='%s' mechanism='PLAIN'>********</auth>",
-		nsSASL)
-
 	logrus.WithFields(logrus.Fields{
 		"account": account,
 	}).Info("Authentication")
-	LogInOut("out", auth_request_anonymous)
 
 	xmppconn.outgoing <- auth_request
 
@@ -293,7 +259,34 @@ func (xmppconn *XMPPConnection) AuthenticateUser(account string, password string
 
 	switch t := auth_result.Interface.(type) {
 	case *saslSuccess:
-		logrus.Info("Authenticated")
+		logrus.Info("Authenticated, request new stream")
+
+		stream_request := fmt.Sprintf("<?xml version='1.0'?>"+
+			"<stream:stream to='%s' xmlns='%s'"+
+			" xmlns:stream='%s' version='1.0'>",
+			domain, nsClient, nsStream)
+
+		xmppconn.outgoing <- stream_request
+
+		// <stream>
+		<-xmppconn.incoming
+
+		// <features>
+		features := <-xmppconn.incoming
+		switch t := features.Interface.(type) {
+		case *streamFeatures:
+			for _, attr := range t.Sms {
+				if attr.XMLName.Space == nsStreamMgmtv3 {
+					xmppconn.conf.stream = int(math.Max(float64(xmppconn.conf.stream), 3.0))
+				} else if attr.XMLName.Space == nsStreamMgmtv2 {
+					xmppconn.conf.stream = int(math.Max(float64(xmppconn.conf.stream), 2.0))
+				}
+				if attr.Optional == "" {
+					xmppconn.conf.stream_optional = true
+				}
+			}
+		}
+
 	case *saslFailure:
 		logrus.Error("Authentication failure : " + t.Text)
 	default:
