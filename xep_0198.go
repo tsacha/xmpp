@@ -3,7 +3,6 @@ package xmpp
 
 import (
 	"encoding/xml"
-	"fmt"
 	"github.com/sirupsen/logrus"
 )
 
@@ -14,6 +13,11 @@ type sm struct {
 }
 
 // XEP 0198 # 3 — Enabling Stream Management
+type enable struct {
+	XMLName xml.Name `xml:"urn:xmpp:sm:3 enable"`
+	Resume  string   `xml:"resume,attr,omitempty"`
+}
+
 type enabled struct {
 	XMLName xml.Name `xml:"enabled"`
 	Resume  string   `xml:"resume,attr"`
@@ -34,9 +38,11 @@ func (xmppconn *XMPPConnection) StartStreamManagement(resume bool) {
 	} else {
 		resume_str = "false"
 	}
-	stream_request := fmt.Sprintf("<enable xmlns='%s' resume='%s' />",
-		nsStreamMgmtv3, resume_str)
-	xmppconn.outgoing <- stream_request
+
+	enable := &enable{Resume: resume_str}
+	output, _ := xml.Marshal(enable)
+
+	xmppconn.outgoing <- string(output)
 	stream_response := <-xmppconn.incoming
 	switch t := stream_response.Interface.(type) {
 	case *enabled:

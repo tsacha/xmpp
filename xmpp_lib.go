@@ -211,8 +211,9 @@ func (xmppconn *XMPPConnection) StartStream(domain string) {
 }
 
 func (xmppconn *XMPPConnection) EncryptConnection(domain string, conn net.Conn) {
-	starttls_request := "<starttls xmlns='" + nsStartTLS + "'/>"
-	xmppconn.outgoing <- starttls_request
+	starttls := &tlsStartTLS{}
+	output, _ := xml.Marshal(starttls)
+	xmppconn.outgoing <- string(output)
 
 	// <proceed>
 	xmppconn.NextElement()
@@ -251,15 +252,14 @@ func create_user_hash(account string, password string) []byte {
 
 func (xmppconn *XMPPConnection) AuthenticateUser(account string, password string, domain string) {
 	hash := create_user_hash(account, password)
+	auth := &saslAuth{Mechanism: "PLAIN", Auth: string(hash)}
+	output, _ := xml.Marshal(auth)
 
-	auth_request := fmt.Sprintf("<auth xmlns='%s' mechanism='PLAIN'>%s</auth>",
-		nsSASL, hash)
 	logrus.WithFields(logrus.Fields{
 		"account": account,
 	}).Info("Authentication")
 
-	xmppconn.outgoing <- auth_request
-
+	xmppconn.outgoing <- string(output)
 	auth_result := <-xmppconn.incoming
 
 	switch t := auth_result.Interface.(type) {
@@ -301,19 +301,19 @@ func (xmppconn *XMPPConnection) AuthenticateUser(account string, password string
 
 func (xmppconn *XMPPConnection) Bind(resource string) {
 	id_bind := strconv.FormatUint(uint64(getCookie()), 10)
-
-	iq_request := fmt.Sprintf("<iq type='%s' id='%s'>"+
-		"<bind xmlns='%s'>"+
-		"<resource>%s</resource>"+
-		"</bind>"+
-		"</iq>",
-		"set", id_bind, nsBind, resource)
+	bind := &bind{Resource: resource}
+	iq_bind := &clientIQ{
+		Type: "set",
+		ID:   id_bind,
+		Bind: bind,
+	}
+	output, _ := xml.Marshal(iq_bind)
 
 	logrus.WithFields(logrus.Fields{
 		"resource": resource,
 		"id":       id_bind,
 	}).Info("Binding to resource")
-	xmppconn.outgoing <- iq_request
+	xmppconn.outgoing <- string(output)
 	iq_response := <-xmppconn.incoming
 	switch t := iq_response.Interface.(type) {
 	case *clientIQ:
@@ -331,14 +331,16 @@ func (xmppconn *XMPPConnection) Bind(resource string) {
 
 func (xmppconn *XMPPConnection) StartSession() {
 	id_session := strconv.FormatUint(uint64(getCookie()), 10)
-
-	session_request := fmt.Sprintf("<iq from='%s' type='%s' id='%s'>"+
-		"<session xmlns='%s' />"+
-		"</iq>",
-		xmppconn.state.jid, "set", id_session, nsSession)
+	iq_session := &clientIQ{
+		Type:    "set",
+		ID:      id_session,
+		From:    xmppconn.state.jid,
+		Session: &session{},
+	}
+	output, _ := xml.Marshal(iq_session)
 
 	logrus.Info("Starting session")
-	xmppconn.outgoing <- session_request
+	xmppconn.outgoing <- string(output)
 	session_response := <-xmppconn.incoming
 	switch t := session_response.Interface.(type) {
 	case *clientIQ:
