@@ -13,7 +13,6 @@ import (
 	"math"
 	mathrand "math/rand"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -46,11 +45,10 @@ type XMPPConnection struct {
 }
 
 type XMPPState struct {
-	sm_version  int
-	sm_optional bool
-	sm_state    bool
-	jid         string
-	resource    string
+	jid      string
+	resource string
+	sm       *StreamManagementConfig
+	session  *SessionConfig
 }
 
 // Cookie is a unique XMPP session identifier
@@ -84,6 +82,10 @@ func (xmppconn *XMPPConnection) Write() {
 	for {
 		xmppconn.writer.WriteString(<-xmppconn.outgoing)
 		xmppconn.writer.Flush()
+		if xmppconn.state.sm != nil && xmppconn.state.sm.state {
+			xmppconn.state.sm.seq += 1
+			xmppconn.state.sm.output <- 1
+		}
 	}
 }
 
@@ -161,8 +163,11 @@ func (xmppconn *XMPPConnection) next(se xml.StartElement) incomingResult {
 		nv = &enabled{}
 	case nsStreamMgmtv3 + " enabled":
 		nv = &enabled{}
+	case nsStreamMgmtv3 + " a":
+		nv = &answer{}
+	case nsStreamMgmtv3 + " r":
+		nv = &request{}
 	default:
-		fmt.Println(se.Name.Space)
 		return (incomingResult{xml.Name{}, nil, errors.New("unexpected XMPP message " +
 			se.Name.Space + " " + se.Name.Local)})
 	}
@@ -173,6 +178,13 @@ func (xmppconn *XMPPConnection) next(se xml.StartElement) incomingResult {
 		return incomingResult{xml.Name{}, nil, err}
 	}
 
+	// If stream management is active
+	if xmppconn.state.sm != nil && xmppconn.state.sm.state {
+		// Do not count namespace stream management
+		if se.Name.Space != nsStreamMgmtv3 {
+			xmppconn.state.sm.handled += 1
+		}
+	}
 	return incomingResult{se.Name, nv, err}
 }
 
@@ -218,14 +230,8 @@ func (xmppconn *XMPPConnection) EncryptConnection(domain string, conn net.Conn) 
 	// <proceed>
 	xmppconn.NextElement()
 
-	f, err := os.Create("/home/sacha/lol.txt")
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
-
 	conf := &tls.Config{
-		ServerName:   domain,
-		KeyLogWriter: w,
+		ServerName: domain,
 	}
 
 	// TLS Handshake
@@ -238,8 +244,6 @@ func (xmppconn *XMPPConnection) EncryptConnection(domain string, conn net.Conn) 
 	xmppconn.writer = bufio.NewWriter(teeOut{t})
 
 	xmppconn.StartStream(domain)
-
-	w.Flush()
 }
 
 func create_user_hash(account string, password string) []byte {
@@ -281,13 +285,16 @@ func (xmppconn *XMPPConnection) AuthenticateUser(account string, password string
 		switch t := features.Interface.(type) {
 		case *streamFeatures:
 			for _, attr := range t.Sms {
+				if attr.XMLName.Space == nsStreamMgmtv3 || attr.XMLName.Space == nsStreamMgmtv2 {
+					xmppconn.state.sm = &StreamManagementConfig{}
+				}
 				if attr.XMLName.Space == nsStreamMgmtv3 {
-					xmppconn.state.sm_version = int(math.Max(float64(xmppconn.state.sm_version), 3.0))
+					xmppconn.state.sm.version = int(math.Max(float64(xmppconn.state.sm.version), 3.0))
 				} else if attr.XMLName.Space == nsStreamMgmtv2 {
-					xmppconn.state.sm_version = int(math.Max(float64(xmppconn.state.sm_version), 2.0))
+					xmppconn.state.sm.version = int(math.Max(float64(xmppconn.state.sm.version), 2.0))
 				}
 				if attr.Optional == "" {
-					xmppconn.state.sm_optional = true
+					xmppconn.state.sm.optional = true
 				}
 			}
 		}
@@ -330,6 +337,10 @@ func (xmppconn *XMPPConnection) Bind(resource string) {
 }
 
 func (xmppconn *XMPPConnection) StartSession() {
+	xmppconn.state.session = &SessionConfig{
+		incoming: make(chan string),
+	}
+
 	id_session := strconv.FormatUint(uint64(getCookie()), 10)
 	iq_session := &clientIQ{
 		Type:    "set",
@@ -341,13 +352,32 @@ func (xmppconn *XMPPConnection) StartSession() {
 
 	logrus.Info("Starting session")
 	xmppconn.outgoing <- string(output)
-	session_response := <-xmppconn.incoming
-	switch t := session_response.Interface.(type) {
-	case *clientIQ:
-		if t.Type == "result" {
-			logrus.WithFields(logrus.Fields{
-				"id": t.ID,
-			}).Info("Session started")
+
+	session_id := <-xmppconn.state.session.incoming
+	logrus.WithFields(logrus.Fields{
+		"id": session_id,
+	}).Info("Session started")
+}
+
+func (xmppconn *XMPPConnection) Process() {
+	for {
+		t := <-xmppconn.incoming
+		switch t := (t.Interface).(type) {
+		case *request:
+			if xmppconn.state.sm != nil && xmppconn.state.sm.state {
+				// Stream Management: answer to server request
+				xmppconn.state.sm.input <- 1
+			}
+		case *answer:
+			if xmppconn.state.sm != nil && xmppconn.state.sm.state {
+				// Stream Management: verify answer from server
+				xmppconn.state.sm.verify <- t.Handled
+			}
+		case *clientIQ:
+			if t.Type == "result" {
+				// Session initiated
+				xmppconn.state.session.incoming <- t.ID
+			}
 		}
 	}
 }

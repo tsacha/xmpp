@@ -31,9 +31,12 @@ func Connect(account string, password string) {
 
 	xmppconn.Bind("xmpp-sacha")
 
-	if xmppconn.state.sm_version == 3 {
+	if xmppconn.state.sm.version == 3 {
 		xmppconn.StartStreamManagement(true)
 	}
 
+	go xmppconn.Process()
+
 	xmppconn.StartSession()
+
 }

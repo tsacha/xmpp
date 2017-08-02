@@ -4,6 +4,10 @@ import (
 	"encoding/xml"
 )
 
+type SessionConfig struct {
+	incoming chan string
+}
+
 // RFC 6120 # 4.1 — Stream Fundamentals
 type clientIQ struct {
 	XMLName xml.Name `xml:"jabber:client iq"`
