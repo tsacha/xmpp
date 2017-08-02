@@ -13,6 +13,7 @@ import (
 	"math"
 	mathrand "math/rand"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -27,6 +28,7 @@ const (
 	nsSession      = "urn:ietf:params:xml:ns:xmpp-session"
 	nsStreamMgmtv2 = "urn:xmpp:sm:2"
 	nsStreamMgmtv3 = "urn:xmpp:sm:3"
+	nsDiscoInfo    = "http://jabber.org/protocol/disco#info"
 )
 
 type incomingResult struct {
@@ -49,6 +51,7 @@ type XMPPState struct {
 	resource string
 	sm       *StreamManagementConfig
 	session  *SessionConfig
+	ping     *PingConfig
 }
 
 // Cookie is a unique XMPP session identifier
@@ -227,11 +230,17 @@ func (xmppconn *XMPPConnection) EncryptConnection(domain string, conn net.Conn) 
 	output, _ := xml.Marshal(starttls)
 	xmppconn.outgoing <- string(output)
 
+	f, err := os.Create("/home/sacha/lol.txt")
+	defer f.Close()
+
+	w := bufio.NewWriter(f)
+
 	// <proceed>
 	xmppconn.NextElement()
 
 	conf := &tls.Config{
-		ServerName: domain,
+		ServerName:   domain,
+		KeyLogWriter: w,
 	}
 
 	// TLS Handshake
@@ -244,6 +253,8 @@ func (xmppconn *XMPPConnection) EncryptConnection(domain string, conn net.Conn) 
 	xmppconn.writer = bufio.NewWriter(teeOut{t})
 
 	xmppconn.StartStream(domain)
+
+	w.Flush()
 }
 
 func create_user_hash(account string, password string) []byte {
@@ -320,8 +331,10 @@ func (xmppconn *XMPPConnection) Bind(resource string) {
 		"resource": resource,
 		"id":       id_bind,
 	}).Info("Binding to resource")
+
 	xmppconn.outgoing <- string(output)
 	iq_response := <-xmppconn.incoming
+
 	switch t := iq_response.Interface.(type) {
 	case *clientIQ:
 		if t.ID == id_bind {
@@ -353,10 +366,16 @@ func (xmppconn *XMPPConnection) StartSession() {
 	logrus.Info("Starting session")
 	xmppconn.outgoing <- string(output)
 
-	session_id := <-xmppconn.state.session.incoming
-	logrus.WithFields(logrus.Fields{
-		"id": session_id,
-	}).Info("Session started")
+	for {
+		session_id := <-xmppconn.state.session.incoming
+		if session_id == id_session {
+			logrus.WithFields(logrus.Fields{
+				"id": session_id,
+			}).Info("Session started")
+			xmppconn.state.session.state = true
+			return
+		}
+	}
 }
 
 func (xmppconn *XMPPConnection) Process() {
@@ -376,8 +395,29 @@ func (xmppconn *XMPPConnection) Process() {
 		case *clientIQ:
 			if t.Type == "result" {
 				// Session initiated
-				xmppconn.state.session.incoming <- t.ID
+				if xmppconn.state.session != nil && !xmppconn.state.session.state {
+					xmppconn.state.session.incoming <- t.ID
+				}
+				// Pong
+				if xmppconn.state.ping != nil {
+					xmppconn.state.ping.incoming <- t.ID
+				}
 			}
 		}
 	}
+}
+
+func (xmppconn *XMPPConnection) Disco() {
+	query := &query{XMLName: xml.Name{Local: "query", Space: nsDiscoInfo}}
+	query_disco_id := strconv.FormatUint(uint64(getCookie()), 10)
+	query_disco := &clientIQ{
+		Type:  "get",
+		ID:    query_disco_id,
+		From:  xmppconn.state.jid,
+		Query: query,
+	}
+	output, _ := xml.Marshal(query_disco)
+
+	logrus.Info("Starting discovery…")
+	xmppconn.outgoing <- string(output)
 }

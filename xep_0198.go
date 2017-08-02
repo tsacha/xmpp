@@ -51,6 +51,10 @@ func (xmppconn *XMPPConnection) SMAnswers() {
 		answer := answer{Handled: xmppconn.state.sm.handled}
 		output, _ := xml.Marshal(answer)
 
+		logrus.WithFields(logrus.Fields{
+			"h": xmppconn.state.sm.handled,
+		}).Info("[XEP 0198] Answering to server request")
+
 		xmppconn.writer.WriteString(string(output))
 		xmppconn.writer.Flush()
 	}
@@ -67,7 +71,7 @@ func (xmppconn *XMPPConnection) SMRequests() {
 			xmppconn.writer.Flush()
 			logrus.WithFields(logrus.Fields{
 				"seq": xmppconn.state.sm.seq,
-			}).Info("Request ACK")
+			}).Info("[XEP 0198] Request ACK to server")
 		}
 	}
 }
@@ -77,12 +81,12 @@ func (xmppconn *XMPPConnection) SMVerify() {
 		srv_handled := <-xmppconn.state.sm.verify
 		logrus.WithFields(logrus.Fields{
 			"h": srv_handled,
-		}).Info("Server ACK")
+		}).Info("[XEP 0198] Receiving request from server")
 	}
 }
 
 func (xmppconn *XMPPConnection) StartStreamManagement(resume bool) {
-	logrus.Info("Start stream management v3")
+	logrus.Info("[XEP 0198] Start stream management v3")
 
 	var resume_str string
 	if resume {
@@ -101,9 +105,9 @@ func (xmppconn *XMPPConnection) StartStreamManagement(resume bool) {
 		logrus.WithFields(logrus.Fields{
 			"id":     t.ID,
 			"resume": resume,
-		}).Info("Stream management v3 enabled")
+		}).Info("[XEP 0198] Stream management v3 enabled")
 		xmppconn.state.sm.state = true
-		xmppconn.state.sm.window = 1
+		xmppconn.state.sm.window = 5
 		xmppconn.state.sm.input = make(chan int)
 		xmppconn.state.sm.output = make(chan int)
 		xmppconn.state.sm.verify = make(chan int)

@@ -11,7 +11,7 @@ func Connect(account string, password string) {
 
 	// TCP Connection
 	conn := ConnectServer(addr, port)
-	defer conn.Close()
+	//	defer conn.Close()
 
 	xmppconn := &XMPPConnection{
 		incoming: make(chan incomingResult),
@@ -39,4 +39,7 @@ func Connect(account string, password string) {
 
 	xmppconn.StartSession()
 
+	go xmppconn.InfinitePing()
+
+	xmppconn.Disco()
 }

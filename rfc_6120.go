@@ -6,6 +6,7 @@ import (
 
 type SessionConfig struct {
 	incoming chan string
+	state    bool
 }
 
 // RFC 6120 # 4.1 — Stream Fundamentals
@@ -15,9 +16,14 @@ type clientIQ struct {
 	ID      string   `xml:"id,attr"`
 	To      string   `xml:"to,attr,omitempty"`
 	Type    string   `xml:"type,attr"`
-	Query   []byte   `xml:",innerxml"`
+	Query   *query   `xml:"query,omitempty"`
 	Bind    *bind    `xml:"bind,omitempty"`
 	Session *session `xml:"session,omitempty"`
+	Ping    *ping    `xml:"ping,omitempty"`
+}
+
+type query struct {
+	XMLName xml.Name
 }
 
 // RFC 6120 # 4.3.2 — Stream features
