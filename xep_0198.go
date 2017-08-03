@@ -86,7 +86,7 @@ func (xmppconn *XMPPConnection) SMVerify() {
 }
 
 func (xmppconn *XMPPConnection) StartStreamManagement(resume bool) {
-	logrus.Info("[XEP 0198] Start stream management v3")
+	logrus.Info("[XEP 0198] Start stream management")
 
 	var resume_str string
 	if resume {
@@ -105,7 +105,7 @@ func (xmppconn *XMPPConnection) StartStreamManagement(resume bool) {
 		logrus.WithFields(logrus.Fields{
 			"id":     t.ID,
 			"resume": resume,
-		}).Info("[XEP 0198] Stream management v3 enabled")
+		}).Info("[XEP 0198] Stream management enabled")
 		xmppconn.state.sm.state = true
 		xmppconn.state.sm.window = 5
 		xmppconn.state.sm.input = make(chan int)

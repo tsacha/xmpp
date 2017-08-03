@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/sirupsen/logrus"
-	"math"
 	mathrand "math/rand"
 	"net"
 	"os"
@@ -19,16 +18,31 @@ import (
 )
 
 const (
-	nsStream       = "http://etherx.jabber.org/streams"
-	nsClient       = "jabber:client"
-	nsStartTLS     = "urn:ietf:params:xml:ns:xmpp-tls"
-	nsSASL         = "urn:ietf:params:xml:ns:xmpp-sasl"
-	nsCaps         = "http://jabber.org/protocol/caps"
-	nsBind         = "urn:ietf:params:xml:ns:xmpp-bind"
-	nsSession      = "urn:ietf:params:xml:ns:xmpp-session"
-	nsStreamMgmtv2 = "urn:xmpp:sm:2"
-	nsStreamMgmtv3 = "urn:xmpp:sm:3"
-	nsDiscoInfo    = "http://jabber.org/protocol/disco#info"
+	nsStream        = "http://etherx.jabber.org/streams"
+	nsClient        = "jabber:client"
+	nsStartTLS      = "urn:ietf:params:xml:ns:xmpp-tls"
+	nsSASL          = "urn:ietf:params:xml:ns:xmpp-sasl"
+	nsCaps          = "http://jabber.org/protocol/caps"
+	nsBind          = "urn:ietf:params:xml:ns:xmpp-bind"
+	nsPing          = "urn:xmpp:ping"
+	nsBlocking      = "urn:xmpp:blocking"
+	nsStreamMgmt    = "urn:xmpp:sm:3"
+	nsMam           = "urn:xmpp:mam:2"
+	nsUniqueStanza  = "urn:xmpp:sid:0"
+	nsPush          = "urn:xmpp:push:0"
+	nsTime          = "urn:xmpp:time"
+	nsCarbons       = "urn:xmpp:carbons:2"
+	nsLastActivity  = "jabber:iq:last"
+	nsVersion       = "jabber:iq:version"
+	nsRoster        = "jabber:iq:roster"
+	nsPrivate       = "jabber:iq:private"
+	nsRegister      = "jabber:iq:register"
+	nsOffline       = "msgoffline"
+	nsVcard         = "vcard-temp"
+	nsCommands      = "http://jabber.org/protocol/commands"
+	nsDiscoInfo     = "http://jabber.org/protocol/disco#info"
+	nsDiscoItems    = "http://jabber.org/protocol/disco#items"
+	nsPubSubPublish = "http://jabber.org/protocol/pubsub#publish"
 )
 
 type incomingResult struct {
@@ -47,11 +61,11 @@ type XMPPConnection struct {
 }
 
 type XMPPState struct {
-	jid      string
-	resource string
-	sm       *StreamManagementConfig
-	session  *SessionConfig
-	ping     *PingConfig
+	jid       string
+	resource  string
+	sm        *StreamManagementConfig
+	ping      *PingConfig
+	discovery *DiscoveryConfig
 }
 
 // Cookie is a unique XMPP session identifier
@@ -162,13 +176,11 @@ func (xmppconn *XMPPConnection) next(se xml.StartElement) incomingResult {
 		nv = &saslFailure{}
 	case nsClient + " iq":
 		nv = &clientIQ{}
-	case nsStreamMgmtv2 + " enabled":
+	case nsStreamMgmt + " enabled":
 		nv = &enabled{}
-	case nsStreamMgmtv3 + " enabled":
-		nv = &enabled{}
-	case nsStreamMgmtv3 + " a":
+	case nsStreamMgmt + " a":
 		nv = &answer{}
-	case nsStreamMgmtv3 + " r":
+	case nsStreamMgmt + " r":
 		nv = &request{}
 	default:
 		return (incomingResult{xml.Name{}, nil, errors.New("unexpected XMPP message " +
@@ -184,7 +196,7 @@ func (xmppconn *XMPPConnection) next(se xml.StartElement) incomingResult {
 	// If stream management is active
 	if xmppconn.state.sm != nil && xmppconn.state.sm.state {
 		// Do not count namespace stream management
-		if se.Name.Space != nsStreamMgmtv3 {
+		if se.Name.Space != nsStreamMgmt {
 			xmppconn.state.sm.handled += 1
 		}
 	}
@@ -296,16 +308,11 @@ func (xmppconn *XMPPConnection) AuthenticateUser(account string, password string
 		switch t := features.Interface.(type) {
 		case *streamFeatures:
 			for _, attr := range t.Sms {
-				if attr.XMLName.Space == nsStreamMgmtv3 || attr.XMLName.Space == nsStreamMgmtv2 {
+				if attr.XMLName.Space == nsStreamMgmt {
 					xmppconn.state.sm = &StreamManagementConfig{}
 				}
-				if attr.XMLName.Space == nsStreamMgmtv3 {
-					xmppconn.state.sm.version = int(math.Max(float64(xmppconn.state.sm.version), 3.0))
-				} else if attr.XMLName.Space == nsStreamMgmtv2 {
-					xmppconn.state.sm.version = int(math.Max(float64(xmppconn.state.sm.version), 2.0))
-				}
-				if attr.Optional == "" {
-					xmppconn.state.sm.optional = true
+				if attr.XMLName.Space == nsStreamMgmt {
+					xmppconn.state.sm.version = 3
 				}
 			}
 		}
@@ -349,35 +356,6 @@ func (xmppconn *XMPPConnection) Bind(resource string) {
 	}
 }
 
-func (xmppconn *XMPPConnection) StartSession() {
-	xmppconn.state.session = &SessionConfig{
-		incoming: make(chan string),
-	}
-
-	id_session := strconv.FormatUint(uint64(getCookie()), 10)
-	iq_session := &clientIQ{
-		Type:    "set",
-		ID:      id_session,
-		From:    xmppconn.state.jid,
-		Session: &session{},
-	}
-	output, _ := xml.Marshal(iq_session)
-
-	logrus.Info("Starting session")
-	xmppconn.outgoing <- string(output)
-
-	for {
-		session_id := <-xmppconn.state.session.incoming
-		if session_id == id_session {
-			logrus.WithFields(logrus.Fields{
-				"id": session_id,
-			}).Info("Session started")
-			xmppconn.state.session.state = true
-			return
-		}
-	}
-}
-
 func (xmppconn *XMPPConnection) Process() {
 	for {
 		t := <-xmppconn.incoming
@@ -394,30 +372,15 @@ func (xmppconn *XMPPConnection) Process() {
 			}
 		case *clientIQ:
 			if t.Type == "result" {
-				// Session initiated
-				if xmppconn.state.session != nil && !xmppconn.state.session.state {
-					xmppconn.state.session.incoming <- t.ID
-				}
 				// Pong
 				if xmppconn.state.ping != nil {
 					xmppconn.state.ping.incoming <- t.ID
 				}
+				// Discovery results
+				if t.Query != nil && t.Query.Identities != nil {
+					xmppconn.state.discovery.incoming <- t
+				}
 			}
 		}
 	}
-}
-
-func (xmppconn *XMPPConnection) Disco() {
-	query := &query{XMLName: xml.Name{Local: "query", Space: nsDiscoInfo}}
-	query_disco_id := strconv.FormatUint(uint64(getCookie()), 10)
-	query_disco := &clientIQ{
-		Type:  "get",
-		ID:    query_disco_id,
-		From:  xmppconn.state.jid,
-		Query: query,
-	}
-	output, _ := xml.Marshal(query_disco)
-
-	logrus.Info("Starting discovery…")
-	xmppconn.outgoing <- string(output)
 }

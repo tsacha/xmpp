@@ -37,9 +37,8 @@ func Connect(account string, password string) {
 
 	go xmppconn.Process()
 
-	xmppconn.StartSession()
+	//	go xmppconn.InfinitePing()
 
-	go xmppconn.InfinitePing()
-
-	xmppconn.Disco()
+	xmppconn.Disco(domain)
+	xmppconn.Disco(account)
 }
