@@ -41,4 +41,6 @@ func Connect(account string, password string) {
 
 	xmppconn.Disco(domain)
 	xmppconn.Disco(account)
+
+	xmppconn.GetRoster()
 }

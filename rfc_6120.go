@@ -25,13 +25,14 @@ type query struct {
 // RFC 6120 # 4.3.2 — Stream features
 // List of features: https://xmpp.org/registrar/stream-features.html
 type streamFeatures struct {
-	XMLName    xml.Name `xml:"http://etherx.jabber.org/streams features"`
-	StartTLS   *tlsStartTLS
-	Mechanisms saslMechanisms
-	Bind       bind
-	Session    bool
-	Sms        []sm `xml:"sm"` // XEP 0198
-	Caps       caps // XEP 0115
+	XMLName    xml.Name        `xml:"http://etherx.jabber.org/streams features"`
+	StartTLS   *tlsStartTLS    `xml:"starttls"`
+	Mechanisms *saslMechanisms `xml:"mechanisms"`
+	Bind       *bind           `xml:"bind"`
+	Sms        [](*sm)         `xml:"sm"`  // XEP 0198
+	Caps       *caps           `xml:"c"`   // XEP 0115
+	Ver        *ver            `xml:"ver"` // RFC 6121
+	Csi        *csi            `xml:"csi"` // XEP 0352
 }
 
 // RFC 6120  # 4.7 — Stream Attributes

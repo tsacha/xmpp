@@ -35,6 +35,7 @@ const (
 	nsLastActivity  = "jabber:iq:last"
 	nsVersion       = "jabber:iq:version"
 	nsRoster        = "jabber:iq:roster"
+	nsRosterVer     = "urn:xmpp:features:rosterver"
 	nsPrivate       = "jabber:iq:private"
 	nsRegister      = "jabber:iq:register"
 	nsOffline       = "msgoffline"
@@ -63,6 +64,7 @@ type XMPPConnection struct {
 type XMPPState struct {
 	jid       string
 	resource  string
+	roster    *RosterConfig
 	sm        *StreamManagementConfig
 	ping      *PingConfig
 	discovery *DiscoveryConfig
@@ -307,6 +309,11 @@ func (xmppconn *XMPPConnection) AuthenticateUser(account string, password string
 		features := <-xmppconn.incoming
 		switch t := features.Interface.(type) {
 		case *streamFeatures:
+			xmppconn.state.roster = &RosterConfig{}
+			if t.Ver != nil && t.Ver.XMLName.Space == nsRosterVer {
+				xmppconn.state.roster.version_supported = true
+			}
+
 			for _, attr := range t.Sms {
 				if attr.XMLName.Space == nsStreamMgmt {
 					xmppconn.state.sm = &StreamManagementConfig{}
