@@ -18,15 +18,15 @@ type PingConfig struct {
 }
 
 func (xmppconn *XMPPConnection) Ping() {
-	xmppconn.state.ping = &PingConfig{
+	xmppconn.State.Ping = &PingConfig{
 		incoming: make(chan string),
 	}
 
-	id_ping := strconv.FormatUint(uint64(getCookie()), 10)
+	id_ping := strconv.FormatUint(uint64(get_cookie()), 10)
 	iq_ping := &clientIQ{
 		Type: "get",
 		ID:   id_ping,
-		From: xmppconn.state.jid,
+		From: xmppconn.State.Jid,
 		Ping: &ping{},
 	}
 	output, _ := xml.Marshal(iq_ping)
@@ -35,7 +35,7 @@ func (xmppconn *XMPPConnection) Ping() {
 		"id": id_ping,
 	}).Info("[XEP 0199] Ping")
 	for {
-		ping_id := <-xmppconn.state.ping.incoming
+		ping_id := <-xmppconn.State.Ping.incoming
 		if ping_id == id_ping {
 			logrus.WithFields(logrus.Fields{
 				"id": ping_id,

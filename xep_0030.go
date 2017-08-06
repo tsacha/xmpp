@@ -25,16 +25,16 @@ type Feature struct {
 }
 
 func (xmppconn *XMPPConnection) Disco(to string) {
-	xmppconn.state.discovery = &DiscoveryConfig{
+	xmppconn.State.Discovery = &DiscoveryConfig{
 		incoming: make(chan *clientIQ),
 	}
 
 	query := &query{XMLName: xml.Name{Local: "query", Space: nsDiscoInfo}}
-	query_disco_id := strconv.FormatUint(uint64(getCookie()), 10)
+	query_disco_id := strconv.FormatUint(uint64(get_cookie()), 10)
 	query_disco := &clientIQ{
 		Type:  "get",
 		ID:    query_disco_id,
-		From:  xmppconn.state.jid,
+		From:  xmppconn.State.Jid,
 		To:    to,
 		Query: query,
 	}
@@ -44,7 +44,7 @@ func (xmppconn *XMPPConnection) Disco(to string) {
 	xmppconn.outgoing <- string(output)
 
 	for {
-		response := <-xmppconn.state.discovery.incoming
+		response := <-xmppconn.State.Discovery.incoming
 		logrus.Info("[XEP 0030] Received discovery response for " + to)
 
 		for _, attr := range response.Query.Features {
