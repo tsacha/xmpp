@@ -101,9 +101,9 @@ func (xmpp *XMPPConnection) Close() {
 	logrus.Info("Disconnected")
 }
 
-func Connect(account string, password string, resource string) *XMPPConnection {
+func Connect(account string, password string, domain string, resource string) *XMPPConnection {
 	LogInit()
-	addr, port, domain := resolv_server(account)
+	addr, port, _ := resolv_server(account, domain)
 
 	// TCP Connection
 	conn := connect_server(addr, port)
@@ -126,7 +126,7 @@ func Connect(account string, password string, resource string) *XMPPConnection {
 	xmpp.AuthenticateUser(account, password, domain)
 	xmpp.Bind(resource)
 
-	if xmpp.State.Sm.version == 3 {
+	if xmpp.State.Sm != nil && xmpp.State.Sm.version == 3 {
 		xmpp.StartStreamManagement(true)
 	}
 	go xmpp.Process()

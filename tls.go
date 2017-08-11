@@ -23,8 +23,9 @@ func (xmpp *XMPPConnection) EncryptConnection(domain string, conn net.Conn) {
 	xmpp.NextElement()
 
 	conf := &tls.Config{
-		ServerName:   domain,
-		KeyLogWriter: w,
+		ServerName:         domain,
+		KeyLogWriter:       w,
+		InsecureSkipVerify: true,
 	}
 
 	// TLS Handshake

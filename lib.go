@@ -40,20 +40,36 @@ const (
 	nsPubSubPublish = "http://jabber.org/protocol/pubsub#publish"
 )
 
-func resolv_server(account string) (string, string, string) {
-	domain := strings.Split(account, "@")[1]
-	_, addrs, _ := net.LookupSRV("xmpp-client", "tcp", domain)
+func resolv_server(account string, custom_domain string) (string, string, string) {
+	var domain string
+	if custom_domain == "" {
+		domain = strings.Split(account, "@")[1]
+	} else {
+		domain = custom_domain
+	}
+	_, srvs, _ := net.LookupSRV("xmpp-client", "tcp", domain)
 
-	// Random choice between SRV records
-	server_choice := mathrand.Intn(len(addrs))
-
-	logrus.WithFields(logrus.Fields{
-		"nb_entries": len(addrs),
-		"domain":     domain,
-		"addr":       addrs[server_choice].Target,
-		"port":       addrs[server_choice].Port,
-	}).Info("Resolve XMPP server")
-	return addrs[server_choice].Target, fmt.Sprint(addrs[server_choice].Port), domain
+	var server_choice int
+	if len(srvs) > 0 {
+		// Random choice between SRV records
+		server_choice = mathrand.Intn(len(srvs))
+		logrus.WithFields(logrus.Fields{
+			"nb_entries": len(srvs),
+			"domain":     domain,
+			"addr":       srvs[server_choice].Target,
+			"port":       srvs[server_choice].Port,
+		}).Info("Resolve XMPP server (SRV)")
+		return srvs[server_choice].Target, fmt.Sprint(srvs[server_choice].Port), domain
+	} else {
+		addrs, _ := net.LookupHost(domain)
+		server_choice = mathrand.Intn(len(addrs))
+		logrus.WithFields(logrus.Fields{
+			"domain": domain,
+			"addr":   addrs[server_choice],
+			"port":   5222,
+		}).Info("Resolve XMPP server (A/AAAA)")
+		return addrs[server_choice], fmt.Sprint(5222), domain
+	}
 }
 
 func connect_server(addr string, port string) net.Conn {
